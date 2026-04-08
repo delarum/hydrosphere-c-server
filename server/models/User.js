@@ -3,181 +3,86 @@ const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 
 const userSchema = new mongoose.Schema({
-  // Basic Info
-  firstName: {
-    type: String,
-    required: [true, 'First name is required'],
-    trim: true,
-    maxlength: [50, 'First name cannot exceed 50 characters']
-  },
-  lastName: {
-    type: String,
-    required: [true, 'Last name is required'],
-    trim: true,
-    maxlength: [50, 'Last name cannot exceed 50 characters']
-  },
-  email: {
-    type: String,
-    required: [true, 'Email is required'],
-    unique: true,
-    lowercase: true,
-    trim: true,
-    match: [/^\S+@\S+\.\S+$/, 'Please enter a valid email']
-  },
-  password: {
-    type: String,
-    required: function() {
-      return !this.googleId; // Only required for non-Google users
-    },
-    minlength: [8, 'Password must be at least 8 characters'],
-    select: false // Don't include password in queries by default
-  },
-  age: {
-    type: Number,
-    required: [true, 'Age is required'],
-    min: [18, 'You must be at least 18 years old to register'],
-    max: [120, 'Please enter a valid age']
-  },
+  firstName: { type: String, required: true, trim: true, maxlength: 50 },
+  lastName: { type: String, required: true, trim: true, maxlength: 50 },
+  email: { type: String, required: true, unique: true, lowercase: true, trim: true },
+  password: { type: String, select: false },
+  age: { type: Number, required: true, min: 18, max: 120 },
+  googleId: { type: String, unique: true, sparse: true },
   
-  // Google OAuth
-  googleId: {
-    type: String,
-    unique: true,
-    sparse: true // Allow null/undefined for non-Google users
-  },
-  googleEmail: {
-    type: String,
-    sparse: true
-  },
+  // Gamification
+  points: { type: Number, default: 0, min: 0 },
+  totalPointsEarned: { type: Number, default: 0, min: 0 },
+  level: { type: Number, default: 1, min: 1 },
+  badges: [{ type: String }],
   
-  // Gamification System
-  points: {
-    type: Number,
-    default: 0,
-    min: 0
-  },
-  totalPointsEarned: {
-    type: Number,
-    default: 0,
-    min: 0
-  },
-  level: {
-    type: Number,
-    default: 1,
-    min: 1
-  },
-  badges: [{
-    type: String,
-    enum: ['first_report', 'verified_reporter', 'water_guardian', 'eco_warrior', 'master_guardian']
+  // Earnings & Impact
+  totalEarnings: { type: Number, default: 0, min: 0 },
+  impactScore: { type: Number, default: 0, min: 0 },
+  verifiedReports: { type: Number, default: 0 },
+  pendingReports: { type: Number, default: 0 },
+  totalReports: { type: Number, default: 0 },
+  
+  // Rewards History
+  rewardsHistory: [{
+    type: { type: String, enum: ['report', 'innovation', 'referral', 'bonus'] },
+    amount: Number,
+    description: String,
+    date: { type: Date, default: Date.now },
+    status: { type: String, enum: ['pending', 'verified', 'paid'], default: 'pending' }
   }],
   
-  // Activity Tracking
-  reportsSubmitted: {
-    type: Number,
-    default: 0
-  },
-  reportsVerified: {
-    type: Number,
-    default: 0
-  },
-  lastActive: {
-    type: Date,
-    default: Date.now
-  },
+  // Innovation Lab
+  innovations: [{
+    title: String,
+    category: String,
+    status: { type: String, enum: ['submitted', 'under_review', 'approved', 'funded', 'rejected'], default: 'submitted' },
+    fundingAmount: Number,
+    submittedAt: { type: Date, default: Date.now }
+  }],
   
-  // Account Status
-  isActive: {
-    type: Boolean,
-    default: true
-  },
-  isEmailVerified: {
-    type: Boolean,
-    default: false
-  },
-  emailVerificationToken: String,
-  passwordResetToken: String,
-  passwordResetExpires: Date,
+  // Activity
+  lastActive: { type: Date, default: Date.now },
+  isActive: { type: Boolean, default: true },
   
   // Profile
-  avatar: {
-    type: String,
-    default: null
-  },
-  bio: {
-    type: String,
-    maxlength: 500
-  },
-  location: {
-    country: String,
-    city: String
-  },
+  avatar: { type: String, default: null },
   
   // Preferences
   notifications: {
     email: { type: Boolean, default: true },
-    push: { type: Boolean, default: true },
-    reportUpdates: { type: Boolean, default: true }
+    rewards: { type: Boolean, default: true }
   }
-}, {
-  timestamps: true,
-  toJSON: { virtuals: true },
-  toObject: { virtuals: true }
-});
+}, { timestamps: true });
 
-// Virtual for initials
+// Virtuals
 userSchema.virtual('initials').get(function() {
   return `${this.firstName.charAt(0)}${this.lastName.charAt(0)}`.toUpperCase();
 });
 
-// Virtual for full name
 userSchema.virtual('fullName').get(function() {
   return `${this.firstName} ${this.lastName}`;
 });
 
-// Index for faster queries
-userSchema.index({ email: 1 });
-userSchema.index({ googleId: 1 });
-userSchema.index({ points: -1 }); // For leaderboards
-
-// Hash password before saving
+// Methods
 userSchema.pre('save', async function(next) {
   if (!this.isModified('password') || !this.password) return next();
-  
-  try {
-    const salt = await bcrypt.genSalt(12);
-    this.password = await bcrypt.hash(this.password, salt);
-    next();
-  } catch (error) {
-    next(error);
-  }
+  this.password = await bcrypt.hash(this.password, 12);
+  next();
 });
 
-// Compare password method
 userSchema.methods.comparePassword = async function(candidatePassword) {
   return await bcrypt.compare(candidatePassword, this.password);
 };
 
-// Add points method
-userSchema.methods.addPoints = async function(points, reason) {
-  this.points += points;
-  this.totalPointsEarned += points;
-  
-  // Level up logic
-  const newLevel = Math.floor(this.totalPointsEarned / 1000) + 1;
-  if (newLevel > this.level) {
-    this.level = newLevel;
-  }
-  
+userSchema.methods.addReward = async function(amount, type, description) {
+  this.totalEarnings += amount;
+  this.points += Math.floor(amount / 10);
+  this.impactScore += Math.floor(amount / 5);
+  this.rewardsHistory.push({ type, amount, description, status: 'verified' });
   await this.save();
   return this;
 };
 
-// Update last active
-userSchema.methods.updateLastActive = async function() {
-  this.lastActive = Date.now();
-  await this.save({ validateBeforeSave: false });
-};
-
 const User = mongoose.model('User', userSchema);
-
 module.exports = User;
