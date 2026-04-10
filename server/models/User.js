@@ -84,5 +84,10 @@ userSchema.methods.addReward = async function(amount, type, description) {
   return this;
 };
 
+userSchema.methods.updateLastActive = async function() {
+  this.lastActive = new Date();
+  await this.save();
+};
+
 const User = mongoose.model('User', userSchema);
 module.exports = User;

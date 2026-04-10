@@ -3,65 +3,102 @@ const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const session = require('express-session');
-const MongoStore = require('connect-mongo').default;
 const passport = require('passport');
 require('dotenv').config();
 
-const authRoutes = require('./server/routes/auth');
-const userRoutes = require('./server/routes/user');
-require('./server/config/passport');
-
 const app = express();
 
-// Middleware
+// ============================
+// BASIC MIDDLEWARE
+// ============================
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// CORS configuration
 app.use(cors({
   origin: process.env.CLIENT_URL || 'http://localhost:5173',
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  credentials: true
 }));
 
-// Session configuration
+// ============================
+// TEMP SESSION (NO MONGOSTORE YET)
+// ============================
 app.use(session({
   secret: process.env.SESSION_SECRET || 'your-secret-key-change-in-production',
   resave: false,
   saveUninitialized: false,
-  store: MongoStore.create({
-    mongoUrl: process.env.MONGODB_URI,
-    ttl: 14 * 24 * 60 * 60
-  }),
   cookie: {
-    secure: process.env.NODE_ENV === 'production',
+    secure: false, // keep false for localhost
     httpOnly: true,
     maxAge: 14 * 24 * 60 * 60 * 1000
   }
 }));
 
-// Passport initialization
+// ============================
+// PASSPORT
+// ============================
 app.use(passport.initialize());
 app.use(passport.session());
+require('./server/config/passport');
 
-// Routes
+// ============================
+// DB STATUS LOGS
+// ============================
+mongoose.connection.on('connected', () => {
+  console.log('🟢 Mongoose connected');
+});
+
+mongoose.connection.on('error', (err) => {
+  console.log('🔴 Mongoose connection error:', err.message);
+});
+
+mongoose.connection.on('disconnected', () => {
+  console.log('🟡 Mongoose disconnected');
+});
+
+// ============================
+// ROUTES
+// ============================
+const authRoutes = require('./server/routes/auth');
+const userRoutes = require('./server/routes/user');
+
 app.use('/api/auth', authRoutes);
 app.use('/api/user', userRoutes);
 
-// Health check
+// ============================
+// HEALTH CHECK
+// ============================
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'OK', timestamp: new Date().toISOString() });
+  res.json({
+    success: true,
+    message: 'Server is healthy',
+    dbState: mongoose.connection.readyState
+  });
 });
 
-// Root route
-app.get('/', (req, res) => {
-  res.send('HYDROSPHERE-C backend is running 🚀');
+// ============================
+// TEST DB ROUTE
+// ============================
+app.get('/api/test-db', async (req, res) => {
+  try {
+    const collections = await mongoose.connection.db.listCollections().toArray();
+    res.json({
+      success: true,
+      message: 'Database connected',
+      collections
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
 });
 
-// Error handling middleware
+// ============================
+// ERROR HANDLER
+// ============================
 app.use((err, req, res, next) => {
-  console.error('🔥 Server Error:', err.stack);
+  console.error('🔥 SERVER ERROR:', err.stack);
   res.status(500).json({
     success: false,
     message: 'Something went wrong!',
@@ -69,21 +106,29 @@ app.use((err, req, res, next) => {
   });
 });
 
-// Database connection
+// ============================
+// CONNECT TO DB + START SERVER
+// ============================
 const PORT = process.env.PORT || 5000;
 const MONGODB_URI = process.env.MONGODB_URI;
 
-mongoose.connect(MONGODB_URI)
-  .then(() => {
-    console.log('✅ MongoDB Connected Successfully');
-    app.listen(PORT, () => {
-      console.log(`🚀 Server running on http://localhost:${PORT}`);
-      console.log(`📍 Environment: ${process.env.NODE_ENV || 'development'}`);
+const startServer = async () => {
+  try {
+    console.log('📦 Attempting MongoDB connection...');
+    await mongoose.connect(MONGODB_URI, {
+      serverSelectionTimeoutMS: 5000
     });
-  })
-  .catch((err) => {
-    console.error('❌ MongoDB Connection Error:', err.message);
-    process.exit(1);
-  });
 
-module.exports = app;
+    console.log('✅ MongoDB Connected Successfully');
+
+    app.listen(PORT, () => {
+      console.log(`🚀 Server running on port ${PORT}`);
+      console.log(`🌍 Client URL: ${process.env.CLIENT_URL}`);
+    });
+  } catch (error) {
+    console.error('❌ MongoDB Connection Error:', error.message);
+    process.exit(1);
+  }
+};
+
+startServer();

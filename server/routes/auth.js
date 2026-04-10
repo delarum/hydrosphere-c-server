@@ -1,8 +1,8 @@
-// server/routes/auth.js
 const express = require('express');
 const router = express.Router();
 const passport = require('passport');
 const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken'); // ✅ ADDED
 const { body, validationResult } = require('express-validator');
 const User = require('../models/User');
 const { generateToken, protect } = require('../middleware/auth');
@@ -20,8 +20,6 @@ const validate = (req, res, next) => {
 };
 
 // @route   POST /api/auth/register
-// @desc    Register new user
-// @access  Public
 router.post('/register', [
   body('firstName').trim().notEmpty().withMessage('First name is required'),
   body('lastName').trim().notEmpty().withMessage('Last name is required'),
@@ -35,30 +33,43 @@ router.post('/register', [
   validate
 ], async (req, res) => {
   try {
+    console.log('📥 Incoming register request:', req.body);
+
     const { firstName, lastName, email, password, age } = req.body;
-    
-    // Check if user exists
+
+    if (!firstName || !lastName || !email || !password || !age) {
+      return res.status(400).json({
+        success: false,
+        message: 'All fields are required'
+      });
+    }
+
     const existingUser = await User.findOne({ email: email.toLowerCase() });
+
     if (existingUser) {
       return res.status(400).json({
         success: false,
         message: 'User already exists with this email'
       });
     }
-    
-    // Create user
-    const user = await User.create({
+
+    const user = new User({
       firstName: firstName.trim(),
       lastName: lastName.trim(),
       email: email.toLowerCase().trim(),
       password,
-      age
+      age: Number(age)
     });
-    
-    // Generate token
+
+    console.log('🛠 User before save:', user);
+
+    await user.save();
+
+    console.log('✅ User saved successfully');
+
     const token = generateToken(user._id);
-    
-    res.status(201).json({
+
+    return res.status(201).json({
       success: true,
       message: 'Account created successfully',
       token,
@@ -74,19 +85,21 @@ router.post('/register', [
         badges: user.badges
       }
     });
+
   } catch (error) {
-    console.error('Registration error:', error);
-    res.status(500).json({
+    console.error('❌ REGISTER ROUTE ERROR:');
+    console.error(error);
+    console.error('❌ Error message:', error.message);
+    console.error('❌ Error stack:', error.stack);
+
+    return res.status(500).json({
       success: false,
       message: 'Error creating account',
       error: error.message
     });
   }
 });
-
 // @route   POST /api/auth/login
-// @desc    Login user
-// @access  Public
 router.post('/login', [
   body('email').isEmail().withMessage('Please enter a valid email'),
   body('password').notEmpty().withMessage('Password is required'),
@@ -94,8 +107,7 @@ router.post('/login', [
 ], async (req, res) => {
   try {
     const { email, password } = req.body;
-    
-    // Check if user exists
+
     const user = await User.findOne({ email: email.toLowerCase() }).select('+password');
     if (!user) {
       return res.status(401).json({
@@ -103,16 +115,14 @@ router.post('/login', [
         message: 'Invalid credentials'
       });
     }
-    
-    // Check if account is active
+
     if (!user.isActive) {
       return res.status(401).json({
         success: false,
         message: 'Account has been deactivated'
       });
     }
-    
-    // Check password
+
     const isMatch = await user.comparePassword(password);
     if (!isMatch) {
       return res.status(401).json({
@@ -120,30 +130,32 @@ router.post('/login', [
         message: 'Invalid credentials'
       });
     }
-    
-    // Update last active
+
     await user.updateLastActive();
-    
-    // Generate token
+
     const token = generateToken(user._id);
-    
+
     res.json({
       success: true,
       message: 'Login successful',
       token,
       user: {
-        id: user._id,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        email: user.email,
-        initials: user.initials,
-        fullName: user.fullName,
-        points: user.points,
-        level: user.level,
-        badges: user.badges,
-        reportsSubmitted: user.reportsSubmitted,
-        reportsVerified: user.reportsVerified
-      }
+  id: user._id,
+  firstName: user.firstName,
+  lastName: user.lastName,
+  email: user.email,
+  initials: user.initials,
+  fullName: user.fullName,
+  points: user.points,
+  level: user.level,
+  badges: user.badges,
+  totalReports: user.totalReports,
+  verifiedReports: user.verifiedReports,
+  pendingReports: user.pendingReports,
+  totalEarnings: user.totalEarnings,
+  impactScore: user.impactScore,
+  avatar: user.avatar
+}
     });
   } catch (error) {
     console.error('Login error:', error);
@@ -156,50 +168,48 @@ router.post('/login', [
 });
 
 // @route   GET /api/auth/google
-// @desc    Google OAuth login
-// @access  Public
 router.get('/google', passport.authenticate('google', {
   scope: ['profile', 'email']
 }));
 
 // @route   GET /api/auth/google/callback
-// @desc    Google OAuth callback
-// @access  Public
-router.get('/google/callback', 
-  passport.authenticate('google', { failureRedirect: '/login' }),
+router.get('/google/callback',
+  passport.authenticate('google', {
+    failureRedirect: `${process.env.CLIENT_URL}/login` // ✅ FIXED
+  }),
   (req, res) => {
-    // Generate JWT token
     const token = generateToken(req.user._id);
-    
-    // Redirect to frontend with token
+
+    // Redirect to frontend auth callback page
     res.redirect(`${process.env.CLIENT_URL}/auth/callback?token=${token}`);
   }
 );
 
 // @route   GET /api/auth/me
-// @desc    Get current user
-// @access  Private
 router.get('/me', protect, async (req, res) => {
   try {
     const user = await User.findById(req.user.id);
-    
+
     res.json({
       success: true,
       user: {
-        id: user._id,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        email: user.email,
-        initials: user.initials,
-        fullName: user.fullName,
-        points: user.points,
-        level: user.level,
-        badges: user.badges,
-        reportsSubmitted: user.reportsSubmitted,
-        reportsVerified: user.reportsVerified,
-        avatar: user.avatar,
-        createdAt: user.createdAt
-      }
+  id: user._id,
+  firstName: user.firstName,
+  lastName: user.lastName,
+  email: user.email,
+  initials: user.initials,
+  fullName: user.fullName,
+  points: user.points,
+  level: user.level,
+  badges: user.badges,
+  totalReports: user.totalReports,
+  verifiedReports: user.verifiedReports,
+  pendingReports: user.pendingReports,
+  totalEarnings: user.totalEarnings,
+  impactScore: user.impactScore,
+  avatar: user.avatar,
+  createdAt: user.createdAt
+}
     });
   } catch (error) {
     res.status(500).json({
@@ -210,8 +220,6 @@ router.get('/me', protect, async (req, res) => {
 });
 
 // @route   POST /api/auth/logout
-// @desc    Logout user
-// @access  Private
 router.post('/logout', protect, async (req, res) => {
   try {
     req.session.destroy((err) => {
@@ -235,31 +243,29 @@ router.post('/logout', protect, async (req, res) => {
 });
 
 // @route   POST /api/auth/refresh
-// @desc    Refresh token
-// @access  Public
 router.post('/refresh', async (req, res) => {
   try {
     const { token } = req.body;
-    
+
     if (!token) {
       return res.status(401).json({
         success: false,
         message: 'No token provided'
       });
     }
-    
+
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     const user = await User.findById(decoded.id);
-    
+
     if (!user || !user.isActive) {
       return res.status(401).json({
         success: false,
         message: 'Invalid token'
       });
     }
-    
+
     const newToken = generateToken(user._id);
-    
+
     res.json({
       success: true,
       token: newToken,
