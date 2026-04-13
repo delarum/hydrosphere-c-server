@@ -31,3 +31,5 @@ Thumbs.db
 # Optional editor stuff
 .vscode/
 .idea/
+.vercel
+.env*.local

@@ -60,9 +60,11 @@ mongoose.connection.on('disconnected', () => {
 // ============================
 const authRoutes = require('./server/routes/auth');
 const userRoutes = require('./server/routes/user');
+const shopRoutes = require('./server/routes/Shop');
 
 app.use('/api/auth', authRoutes);
 app.use('/api/user', userRoutes);
+app.use('/api/shop', shopRoutes);
 
 // ============================
 // HEALTH CHECK
@@ -116,7 +118,9 @@ const startServer = async () => {
   try {
     console.log('📦 Attempting MongoDB connection...');
     await mongoose.connect(MONGODB_URI, {
-      serverSelectionTimeoutMS: 5000
+      serverSelectionTimeoutMS: 30000,  // was 5000
+       socketTimeoutMS: 45000,
+       maxPoolSize: 10,
     });
 
     console.log('✅ MongoDB Connected Successfully');
